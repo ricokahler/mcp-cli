@@ -27,5 +27,3 @@ jobs:
       - run: pnpm validate
       - run: node scripts/assert-release-version.mjs "${{ github.event.release.tag_name }}"
       - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
