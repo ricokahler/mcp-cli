@@ -7,8 +7,8 @@ import {
   redactServer,
   removeOwnedServer,
   resolveServer,
+  resolveServerCandidates,
 } from '../src/config.js';
-import type { CliError } from '../src/errors.js';
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await mkdir(join(path, '..'), { recursive: true });
@@ -114,10 +114,13 @@ describe('configuration discovery', () => {
     expect(redactServer(server)).toMatchObject({ config: { env: { SECRET: '[REDACTED]' } } });
   });
 
-  it('deduplicates identical definitions and rejects ambiguous bare names', async () => {
+  it('deduplicates identical definitions and orders conflicting bare names by source preference', async () => {
     const { home, project } = await fixture();
     const same = { command: 'node', args: ['same'] };
-    await writeJson(join(home, '.mcp-cli', 'config.json'), { version: 1, mcpServers: { duplicate: same } });
+    await writeJson(join(home, '.mcp-cli', 'config.json'), {
+      version: 1,
+      mcpServers: { duplicate: same, conflict: { command: 'node', args: ['own'] } },
+    });
     await writeJson(join(project, '.mcp.json'), {
       mcpServers: { duplicate: same, conflict: { command: 'node', args: ['one'] } },
     });
@@ -126,9 +129,12 @@ describe('configuration discovery', () => {
     const result = await discoverServers({ cwd: project, homeDirectory: home, explicitPaths: [explicit] });
     expect(result.servers.filter((server) => server.name === 'duplicate')).toHaveLength(1);
     expect(resolveServer(result.servers, 'duplicate').sources).toHaveLength(2);
-    expect(() => resolveServer(result.servers, 'conflict')).toThrow(
-      expect.objectContaining<Partial<CliError>>({ code: 'SERVER_AMBIGUOUS', exitCode: 3 }),
-    );
+    expect(resolveServerCandidates(result.servers, 'conflict').map((server) => server.id)).toEqual([
+      'mcp-cli:user/conflict',
+      'explicit:user/conflict',
+      'project:project/conflict',
+    ]);
+    expect(resolveServer(result.servers, 'conflict').config).toMatchObject({ args: ['own'] });
     expect(resolveServer(result.servers, 'explicit:user/conflict').config).toMatchObject({ args: ['two'] });
   });
 

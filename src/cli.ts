@@ -15,6 +15,7 @@ import {
   redactServer,
   removeOwnedServer,
   resolveServer,
+  resolveServerCandidates,
   serverReference,
 } from './config.js';
 import { asCliError, CliError } from './errors.js';
@@ -28,12 +29,14 @@ import {
   listAllTools,
   loginServer,
   logoutServer,
+  withConnectedClient,
   withClient,
+  type ConnectedClient,
 } from './mcp.js';
 import { writeFailure, writeSuccess } from './output.js';
 import type { DiscoveredServer } from './types.js';
 
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 
 interface CommonOptions {
   config: string[];
@@ -83,6 +86,48 @@ async function discovery(options: CommonOptions) {
 
 async function resolvedServer(reference: string, options: CommonOptions): Promise<DiscoveredServer> {
   return resolveServer((await discovery(options)).servers, reference);
+}
+
+async function connectResolvedServer(
+  reference: string,
+  options: CommonOptions,
+): Promise<{ server: DiscoveredServer; connected: ConnectedClient }> {
+  const candidates = resolveServerCandidates((await discovery(options)).servers, reference);
+  const failures: { server: DiscoveredServer; error: CliError }[] = [];
+  for (const server of candidates) {
+    try {
+      return { server, connected: await connectServer(server) };
+    } catch (error) {
+      failures.push({ server, error: asCliError(error) });
+    }
+  }
+
+  const primary = failures[0];
+  if (!primary) throw new Error(`No server candidates were attempted for ${reference}`);
+  if (failures.length === 1) throw primary.error;
+  throw new CliError({
+    category: primary.error.category,
+    code: primary.error.code,
+    message: primary.error.message,
+    details: {
+      attempts: failures.map(({ server, error }) => ({
+        server: serverReference(server),
+        error: { code: error.code, message: error.message },
+      })),
+    },
+    ...(primary.error.remediation === undefined ? {} : { remediation: primary.error.remediation }),
+    cause: primary.error,
+  });
+}
+
+async function withResolvedClient<T>(
+  reference: string,
+  options: CommonOptions,
+  action: (client: ConnectedClient['client'], server: DiscoveredServer) => Promise<T>,
+): Promise<{ server: DiscoveredServer; data: T }> {
+  const { server, connected } = await connectResolvedServer(reference, options);
+  const data = await withConnectedClient(server, connected, (client) => action(client, server));
+  return { server, data };
 }
 
 function parseJsonObject(text: string, label: string): Record<string, unknown> {
@@ -349,8 +394,7 @@ function addMcpCommands(program: Command): void {
     program.command('inspect').argument('<server>').description('Inspect one MCP server.'),
   ).action(
     operation('inspect', async (reference: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const connected = await connectServer(server);
+      const { server, connected } = await connectResolvedServer(reference, options);
       let data: unknown;
       try {
         data = {
@@ -382,8 +426,7 @@ function addMcpCommands(program: Command): void {
         }
         const result = await discovery(options);
         if (!options.all) {
-          const server = resolveServer(result.servers, reference ?? '');
-          const data = await withClient(server, (client) =>
+          const { server, data } = await withResolvedClient(reference ?? '', options, (client, server) =>
             listAllTools(client, server.config.toolTimeoutMs),
           );
           await writeSuccess('tools.list', { tools: data }, serverReference(server), options);
@@ -420,9 +463,10 @@ function addMcpCommands(program: Command): void {
 
   withCommonOptions(tools.command('get').argument('<server>').argument('<tool>')).action(
     operation('tools.get', async (reference: string, toolName: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const definitions = await withClient(server, (client) =>
-        listAllTools(client, server.config.toolTimeoutMs),
+      const { server, data: definitions } = await withResolvedClient(
+        reference,
+        options,
+        (client, selectedServer) => listAllTools(client, selectedServer.config.toolTimeoutMs),
       );
       const tool = definitions.find((definition) => {
         return (
@@ -446,11 +490,13 @@ function addMcpCommands(program: Command): void {
   withInputOptions(tools.command('call').argument('<server>').argument('<tool>')).action(
     operation('tools.call', async (reference: string, toolName: string, options: InputOptions) => {
       const input = await readJsonInput(options, true);
-      const server = await resolvedServer(reference, options);
-      const result = await withClient(server, (client) =>
-        client.callTool({ name: toolName, arguments: input }, undefined, {
-          timeout: server.config.toolTimeoutMs,
-        }),
+      const { server, data: result } = await withResolvedClient(
+        reference,
+        options,
+        (client, selectedServer) =>
+          client.callTool({ name: toolName, arguments: input }, undefined, {
+            timeout: selectedServer.config.toolTimeoutMs,
+          }),
       );
       await writeSuccess('tools.call', result, serverReference(server), options);
     }),
@@ -459,18 +505,16 @@ function addMcpCommands(program: Command): void {
   const resources = program.command('resources').description('List and read MCP resources.');
   withCommonOptions(resources.command('list').argument('<server>')).action(
     operation('resources.list', async (reference: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const data = await withClient(server, (client) =>
-        listAllResources(client, server.config.toolTimeoutMs),
+      const { server, data } = await withResolvedClient(reference, options, (client, selectedServer) =>
+        listAllResources(client, selectedServer.config.toolTimeoutMs),
       );
       await writeSuccess('resources.list', { resources: data }, serverReference(server), options);
     }),
   );
   withCommonOptions(resources.command('templates').argument('<server>')).action(
     operation('resources.templates', async (reference: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const data = await withClient(server, (client) =>
-        listAllResourceTemplates(client, server.config.toolTimeoutMs),
+      const { server, data } = await withResolvedClient(reference, options, (client, selectedServer) =>
+        listAllResourceTemplates(client, selectedServer.config.toolTimeoutMs),
       );
       await writeSuccess(
         'resources.templates',
@@ -482,9 +526,8 @@ function addMcpCommands(program: Command): void {
   );
   withCommonOptions(resources.command('read').argument('<server>').argument('<uri>')).action(
     operation('resources.read', async (reference: string, uri: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const data = await withClient(server, (client) =>
-        client.readResource({ uri }, { timeout: server.config.toolTimeoutMs }),
+      const { server, data } = await withResolvedClient(reference, options, (client, selectedServer) =>
+        client.readResource({ uri }, { timeout: selectedServer.config.toolTimeoutMs }),
       );
       await writeSuccess('resources.read', data, serverReference(server), options);
     }),
@@ -493,17 +536,20 @@ function addMcpCommands(program: Command): void {
   const prompts = program.command('prompts').description('List and retrieve MCP prompts.');
   withCommonOptions(prompts.command('list').argument('<server>')).action(
     operation('prompts.list', async (reference: string, options: CommonOptions) => {
-      const server = await resolvedServer(reference, options);
-      const data = await withClient(server, (client) => listAllPrompts(client, server.config.toolTimeoutMs));
+      const { server, data } = await withResolvedClient(reference, options, (client, selectedServer) =>
+        listAllPrompts(client, selectedServer.config.toolTimeoutMs),
+      );
       await writeSuccess('prompts.list', { prompts: data }, serverReference(server), options);
     }),
   );
   withInputOptions(prompts.command('get').argument('<server>').argument('<prompt>')).action(
     operation('prompts.get', async (reference: string, promptName: string, options: InputOptions) => {
-      const server = await resolvedServer(reference, options);
       const input = promptArguments(await readJsonInput(options, false));
-      const data = await withClient(server, (client) =>
-        client.getPrompt({ name: promptName, arguments: input }, { timeout: server.config.toolTimeoutMs }),
+      const { server, data } = await withResolvedClient(reference, options, (client, selectedServer) =>
+        client.getPrompt(
+          { name: promptName, arguments: input },
+          { timeout: selectedServer.config.toolTimeoutMs },
+        ),
       );
       await writeSuccess('prompts.get', data, serverReference(server), options);
     }),

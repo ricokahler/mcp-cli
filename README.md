@@ -61,7 +61,7 @@ Use `mcp-cli help <command...>` for exact arguments, options, examples, output, 
 |  `0` | Success                                     |
 |  `1` | Unexpected internal failure                 |
 |  `2` | Invalid command, input, or configuration    |
-|  `3` | Missing or ambiguous server or tool         |
+|  `3` | Missing server or tool                      |
 |  `4` | Authentication required or Keychain failure |
 |  `5` | Connection, protocol, or MCP server failure |
 
@@ -86,9 +86,23 @@ to see every path considered, its scope, and any parse or interpolation error. `
 `${env:VAR}`, `${workspaceFolder}`, and `${userHome}` interpolation are supported. Interactive editor placeholders are
 reported as unresolved instead of prompting.
 
-Identical definitions collapse into one server. If different sources define the same name, use the source-qualified
-ID printed by `mcp-cli servers list`, such as `codex:user/github`. Environment and static header values are always
-redacted from inspection output.
+Identical definitions collapse into one server. When different sources define the same bare name, `mcp-cli` tries
+them in this deterministic order until one establishes an MCP connection:
+
+1. `mcp-cli` user config
+2. Explicit `--config` files, in argument order
+3. Project `.mcp.json`
+4. Claude Code, then Claude Desktop
+5. Codex
+6. Cursor
+7. VS Code
+8. Gemini CLI
+
+Project or local definitions precede user definitions within a provider. Commands that only inspect configuration or
+Keychain state select the first candidate. A source-qualified ID such as `codex:user/github` selects only that exact
+source and disables failover. Once a candidate connects, the requested MCP operation runs only against that server;
+tool calls are never retried on another server. Environment and static header values are always redacted from
+inspection output.
 
 The owned config has a versioned [JSON Schema](./config.schema.json) and a familiar `mcpServers` map:
 
