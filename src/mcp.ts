@@ -63,7 +63,7 @@ function transportFor(
 }
 
 function newClient(): Client {
-  return new Client({ name: 'mcp-cli', version: '0.1.0' }, { capabilities: {} });
+  return new Client({ name: 'mcp-cli', version: '0.1.1' }, { capabilities: {} });
 }
 
 function protocolError(error: unknown, server: DiscoveredServer): CliError {

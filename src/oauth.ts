@@ -15,6 +15,7 @@ interface StoredOAuthRecord {
   version: 1;
   tokens?: OAuthTokens;
   clientInformation?: OAuthClientInformationMixed;
+  clientRedirectUrl?: string;
   codeVerifier?: string;
   discoveryState?: OAuthDiscoveryState;
 }
@@ -60,7 +61,7 @@ export class KeychainOAuthProvider implements OAuthClientProvider {
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
       software_id: 'https://github.com/ricokahler/mcp-cli',
-      software_version: '0.1.0',
+      software_version: '0.1.1',
     };
   }
 
@@ -69,11 +70,23 @@ export class KeychainOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return (await this.load()).clientInformation;
+    const record = await this.load();
+    if (
+      this.interactive &&
+      record.tokens === undefined &&
+      record.clientInformation !== undefined &&
+      record.clientRedirectUrl !== this.redirectUrl.toString()
+    ) {
+      delete record.clientInformation;
+      delete record.clientRedirectUrl;
+      await this.save(record);
+      return undefined;
+    }
+    return record.clientInformation;
   }
 
   async saveClientInformation(clientInformation: OAuthClientInformationMixed): Promise<void> {
-    await this.update({ clientInformation });
+    await this.update({ clientInformation, clientRedirectUrl: this.redirectUrl.toString() });
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
@@ -126,7 +139,10 @@ export class KeychainOAuthProvider implements OAuthClientProvider {
       return;
     }
     const record = await this.load();
-    if (scope === 'client') delete record.clientInformation;
+    if (scope === 'client') {
+      delete record.clientInformation;
+      delete record.clientRedirectUrl;
+    }
     if (scope === 'tokens') delete record.tokens;
     if (scope === 'verifier') delete record.codeVerifier;
     if (scope === 'discovery') delete record.discoveryState;
