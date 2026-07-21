@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ricokahler/mcp-cli/main/config.schema.json",
+  "title": "mcp-cli configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "mcpServers"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "mcpServers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/server" }
+    }
+  },
+  "$defs": {
+    "server": {
+      "oneOf": [{ "$ref": "#/$defs/stdioServer" }, { "$ref": "#/$defs/httpServer" }]
+    },
+    "common": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "startupTimeoutMs": { "type": "integer", "minimum": 1 },
+        "toolTimeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "stdioServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "type": { "const": "stdio" },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "envVars": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "enabled": { "type": "boolean", "default": true },
+        "startupTimeoutMs": { "type": "integer", "minimum": 1 },
+        "toolTimeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "httpServer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url"],
+      "properties": {
+        "type": { "const": "http" },
+        "url": { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "headerEnv": { "type": "object", "additionalProperties": { "type": "string" } },
+        "bearerTokenEnvVar": { "type": "string" },
+        "enabled": { "type": "boolean", "default": true },
+        "startupTimeoutMs": { "type": "integer", "minimum": 1 },
+        "toolTimeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}
