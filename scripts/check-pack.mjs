@@ -8,6 +8,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const root = resolve(new URL('..', import.meta.url).pathname);
+const { version: expectedVersion } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
 const directory = await mkdtemp(join(tmpdir(), 'mcp-cli-pack-check-'));
 const packDirectory = join(directory, 'pack');
 const installPrefix = join(directory, 'install');
@@ -35,7 +36,8 @@ try {
   const run = async (...args) =>
     execFileAsync(process.execPath, [binary, ...args], { cwd: directory, maxBuffer: 10 * 1024 * 1024 });
   const version = (await run('--version')).stdout.trim();
-  if (version !== '0.1.0') throw new Error(`Installed tarball returned unexpected version ${version}`);
+  if (version !== expectedVersion)
+    throw new Error(`Installed tarball returned unexpected version ${version}`);
   const help = (await run('help')).stdout;
   if (!help.includes('mcp-cli help --json'))
     throw new Error('Installed tarball did not render top-level help');

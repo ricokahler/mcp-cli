@@ -33,7 +33,7 @@ import {
 import { writeFailure, writeSuccess } from './output.js';
 import type { DiscoveredServer } from './types.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 
 interface CommonOptions {
   config: string[];

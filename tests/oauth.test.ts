@@ -65,6 +65,48 @@ describe('OAuth provider', () => {
     });
   });
 
+  it('re-registers an interactive client when the loopback redirect changes', async () => {
+    const store = new MemoryStore();
+    const nonInteractive = new KeychainOAuthProvider({
+      serverUrl: 'https://example.test/mcp',
+      redirectUrl: new URL('http://127.0.0.1/callback'),
+      store,
+    });
+    await nonInteractive.saveClientInformation({ client_id: 'stale-client' });
+
+    const interactive = new KeychainOAuthProvider({
+      serverUrl: 'https://example.test/mcp',
+      redirectUrl: new URL('http://127.0.0.1:54321/callback'),
+      interactive: true,
+      store,
+    });
+
+    await expect(interactive.clientInformation()).resolves.toBeUndefined();
+    await expect(interactive.status()).resolves.toMatchObject({ hasClientInformation: false });
+  });
+
+  it('keeps the registered client while OAuth tokens are present', async () => {
+    const store = new MemoryStore();
+    const registered = new KeychainOAuthProvider({
+      serverUrl: 'https://example.test/mcp',
+      redirectUrl: new URL('http://127.0.0.1:54321/callback'),
+      store,
+    });
+    await registered.saveClientInformation({ client_id: 'authenticated-client' });
+    await registered.saveTokens({ access_token: 'access', token_type: 'Bearer' });
+
+    const interactive = new KeychainOAuthProvider({
+      serverUrl: 'https://example.test/mcp',
+      redirectUrl: new URL('http://127.0.0.1:54322/callback'),
+      interactive: true,
+      store,
+    });
+
+    await expect(interactive.clientInformation()).resolves.toMatchObject({
+      client_id: 'authenticated-client',
+    });
+  });
+
   it('accepts a valid loopback callback and rejects an invalid state', async () => {
     const valid = await createOAuthCallback();
     await fetch(`${valid.redirectUrl.toString()}?code=ok&state=${valid.state}`);
