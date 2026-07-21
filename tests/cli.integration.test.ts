@@ -102,6 +102,30 @@ describe('installed-shape CLI over stdio MCP', () => {
     });
   });
 
+  it('tries conflicting bare-name configs in priority order until one connects', async () => {
+    const broken = join(directory, 'a-broken.json');
+    await writeFile(
+      broken,
+      `${JSON.stringify({
+        mcpServers: {
+          fixture: {
+            command: join(directory, 'missing-server-command'),
+            startupTimeoutMs: 500,
+          },
+        },
+      })}\n`,
+    );
+    const result = await run(['inspect', 'fixture', '--config', broken, '--config', config], {
+      cwd: directory,
+    });
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      ok: true,
+      server: { sources: [{ path: config }] },
+      data: { serverInfo: { name: 'mcp-cli-fixture' } },
+    });
+  });
+
   it('exhausts tool pagination, gets a schema, and calls tools with every input form', async () => {
     const listed = JSON.parse(
       (await run(configured(['tools', 'list', 'fixture']), { cwd: directory })).stdout,

@@ -63,7 +63,7 @@ function transportFor(
 }
 
 function newClient(): Client {
-  return new Client({ name: 'mcp-cli', version: '0.1.1' }, { capabilities: {} });
+  return new Client({ name: 'mcp-cli', version: '0.1.2' }, { capabilities: {} });
 }
 
 function protocolError(error: unknown, server: DiscoveredServer): CliError {
@@ -211,6 +211,14 @@ export async function withClient<T>(
   action: (client: Client) => Promise<T>,
 ): Promise<T> {
   const connected = await connectServer(server);
+  return withConnectedClient(server, connected, action);
+}
+
+export async function withConnectedClient<T>(
+  server: DiscoveredServer,
+  connected: ConnectedClient,
+  action: (client: Client) => Promise<T>,
+): Promise<T> {
   try {
     return await action(connected.client);
   } catch (error) {

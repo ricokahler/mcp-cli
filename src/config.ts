@@ -42,6 +42,24 @@ interface OwnConfigDocument {
   mcpServers: Record<string, unknown>;
 }
 
+const SOURCE_KIND_PRIORITY: Record<ServerSourceKind, number> = {
+  'mcp-cli': 0,
+  explicit: 1,
+  project: 2,
+  claude: 3,
+  'claude-desktop': 4,
+  codex: 5,
+  cursor: 6,
+  vscode: 7,
+  gemini: 8,
+};
+
+const SOURCE_SCOPE_PRIORITY: Record<ServerSourceScope, number> = {
+  project: 0,
+  local: 1,
+  user: 2,
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -248,6 +266,25 @@ function sourceId(source: ServerSource, name: string): string {
   return `${source.kind}:${source.scope}/${name}`;
 }
 
+function compareSources(left: ServerSource, right: ServerSource): number {
+  return (
+    SOURCE_KIND_PRIORITY[left.kind] - SOURCE_KIND_PRIORITY[right.kind] ||
+    SOURCE_SCOPE_PRIORITY[left.scope] - SOURCE_SCOPE_PRIORITY[right.scope]
+  );
+}
+
+function preferredSource(server: DiscoveredServer): ServerSource {
+  const source = server.sources.toSorted(compareSources)[0];
+  if (!source) throw new Error(`Server ${server.name} has no configuration source`);
+  return source;
+}
+
+function compareServers(left: DiscoveredServer, right: DiscoveredServer): number {
+  const leftSource = preferredSource(left);
+  const rightSource = preferredSource(right);
+  return compareSources(leftSource, rightSource) || left.id.localeCompare(right.id);
+}
+
 function deduplicate(records: RawServerRecord[]): DiscoveredServer[] {
   const byNameAndFingerprint = new Map<string, RawServerRecord[]>();
   for (const record of records) {
@@ -269,7 +306,7 @@ function deduplicate(records: RawServerRecord[]): DiscoveredServer[] {
         sources: group.map((record) => record.source),
       };
     })
-    .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
+    .sort((left, right) => left.name.localeCompare(right.name) || compareServers(left, right));
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -295,7 +332,7 @@ async function vscodeProfileCandidates(userDirectory: string): Promise<SourceCan
   const profilesDirectory = join(userDirectory, 'profiles');
   let profileNames: string[] = [];
   try {
-    profileNames = await readdir(profilesDirectory);
+    profileNames = (await readdir(profilesDirectory)).sort();
   } catch {
     // VS Code profiles are optional.
   }
@@ -449,28 +486,26 @@ export async function discoverServers(options: DiscoveryOptions = {}): Promise<D
   return { servers: deduplicate(records), sources: diagnostics };
 }
 
-export function resolveServer(servers: DiscoveredServer[], reference: string): DiscoveredServer {
-  const exact = servers.find(
+export function resolveServerCandidates(servers: DiscoveredServer[], reference: string): DiscoveredServer[] {
+  const exact = servers.filter(
     (server) =>
       server.id === reference || server.sources.some((source) => sourceId(source, server.name) === reference),
   );
-  if (exact) return exact;
-  const matching = servers.filter((server) => server.name === reference);
-  if (matching.length === 1 && matching[0]) return matching[0];
-  if (matching.length > 1) {
-    throw new CliError({
-      category: 'resolution',
-      code: 'SERVER_AMBIGUOUS',
-      message: `Server name ${reference} is ambiguous; use a source-qualified ID.`,
-      details: { candidates: matching.map((server) => server.id) },
-    });
-  }
+  if (exact.length > 0) return exact.toSorted(compareServers);
+  const matching = servers.filter((server) => server.name === reference).toSorted(compareServers);
+  if (matching.length > 0) return matching;
   throw new CliError({
     category: 'resolution',
     code: 'SERVER_NOT_FOUND',
     message: `No configured MCP server matches ${reference}.`,
     details: { available: servers.map((server) => server.id) },
   });
+}
+
+export function resolveServer(servers: DiscoveredServer[], reference: string): DiscoveredServer {
+  const server = resolveServerCandidates(servers, reference)[0];
+  if (!server) throw new Error(`Unexpected empty resolution result for ${reference}`);
+  return server;
 }
 
 export function serverReference(server: DiscoveredServer): ServerReference {

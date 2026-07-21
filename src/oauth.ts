@@ -61,7 +61,7 @@ export class KeychainOAuthProvider implements OAuthClientProvider {
       response_types: ['code'],
       token_endpoint_auth_method: 'none',
       software_id: 'https://github.com/ricokahler/mcp-cli',
-      software_version: '0.1.1',
+      software_version: '0.1.2',
     };
   }
 
